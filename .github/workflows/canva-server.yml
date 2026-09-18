@@ -1,0 +1,215 @@
+name: Canva Server (tunnel)
+
+# Runs the Canva session API on a runner and exposes it over a Cloudflare
+# quick tunnel, so you can POST cookies to it from anywhere and drive the
+# browser remotely. A noVNC tunnel is published alongside it so you can watch
+# the Chrome window while it works.
+#
+# Same browser stack as canva-publish.yml and the url-scraper workflows:
+# Xvfb + ungoogled-chromium + cf-autoclick, because Canva blocks headless.
+#
+# The API is protected by a per-run bearer token printed in the job summary.
+# Without it the tunnel URL alone would let anyone drive a browser holding
+# whatever Canva session gets posted to it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: 'How long to keep the tunnel open'
+        required: false
+        default: '30'
+        type: string
+
+env:
+  DISPLAY: ':99'
+  CHROMIUM_VERSION: '149.0.7827.53-1'
+  PORT: '3000'
+  VNC_PORT: '5901'
+  NOVNC_PORT: '6080'
+
+jobs:
+  serve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm ci
+
+      - name: Install Xvfb, VNC and browser libs
+        timeout-minutes: 6
+        run: |
+          sudo apt-get -o Acquire::Retries=6 update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            xvfb x11vnc libnss3 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdrm2 libgbm1 \
+            libgtk-3-0 libxcomposite1 libxdamage1 libxrandr2 libxkbcommon0 \
+            libpango-1.0-0 libasound2t64 fonts-liberation
+
+      - name: Start virtual display
+        run: |
+          Xvfb :99 -screen 0 1440x900x24 -nolisten tcp &
+          for i in $(seq 1 20); do [ -e /tmp/.X11-unix/X99 ] && break; sleep 0.5; done
+          test -e /tmp/.X11-unix/X99 && echo "Xvfb :99 ready"
+          x11vnc -display :99 -nopw -forever -shared -rfbport "$VNC_PORT" -quiet > /tmp/x11vnc.log 2>&1 &
+          sleep 2 && echo "x11vnc on :$VNC_PORT"
+
+      - name: Setup ungoogled-chromium + cf-autoclick
+        timeout-minutes: 6
+        run: |
+          mkdir -p vendor
+          CHROMIUM_URL="https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/releases/download/${CHROMIUM_VERSION}/ungoogled-chromium-${CHROMIUM_VERSION}-x86_64_linux.tar.xz"
+          curl -fsSL -o /tmp/chromium.tar.xz "$CHROMIUM_URL"
+          tar -xJf /tmp/chromium.tar.xz -C vendor/
+          mv vendor/ungoogled-chromium-* vendor/ungoogled-chromium
+          chmod +x vendor/ungoogled-chromium/chrome
+          vendor/ungoogled-chromium/chrome --version
+          git clone --depth 1 https://github.com/tenacious6/cf-autoclick.git vendor/cf-autoclick
+          test -f vendor/cf-autoclick/manifest.json && echo "cf-autoclick ready"
+
+      - name: Start noVNC
+        run: |
+          git clone --depth 1 -q https://github.com/novnc/noVNC.git ~/noVNC
+          git clone --depth 1 -q https://github.com/novnc/websockify.git ~/noVNC/utils/websockify
+          ~/noVNC/utils/novnc_proxy --vnc localhost:$VNC_PORT --listen $NOVNC_PORT > /tmp/novnc.log 2>&1 &
+          sleep 3 && echo "noVNC on :$NOVNC_PORT"
+
+      - name: Generate API token
+        id: token
+        run: |
+          TOKEN=$(openssl rand -hex 24)
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+          # Deliberately not masked: it has to be readable in the job summary to
+          # be usable. On a public repo that means the token and the tunnel URL
+          # are both world-readable for the life of the run — see the warning
+          # published below. Treat this as a short-lived test rig, not a service.
+          echo "API token generated (visible in the job summary)"
+
+      - name: Start the Canva server
+        env:
+          API_TOKEN: ${{ steps.token.outputs.token }}
+          CHROME_BIN: vendor/ungoogled-chromium/chrome
+          CF_AUTOCLICK_DIR: vendor/cf-autoclick
+          CHROME_NO_SANDBOX: '1'
+          LOG_LEVEL: debug
+          # The server boots Canva OAuth config lazily, so these are only
+          # placeholders to satisfy the Connect-API half we are not using here.
+          CANVA_CLIENT_ID: unused
+          CANVA_CLIENT_SECRET: unused
+        run: |
+          nohup npm start > /tmp/server.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf "http://127.0.0.1:${PORT}/healthz" >/dev/null && break
+            sleep 1
+          done
+          curl -sf "http://127.0.0.1:${PORT}/healthz" && echo "server up" || { cat /tmp/server.log; exit 1; }
+
+      - name: Install cloudflared
+        run: |
+          wget -q -O /tmp/cloudflared.deb \
+            https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i /tmp/cloudflared.deb >/dev/null
+          cloudflared --version
+
+      - name: Open tunnels
+        id: tunnel
+        run: |
+          grab_url() {  # $1 = logfile
+            for i in $(seq 1 40); do
+              URL=$(grep -oE 'https://[a-zA-Z0-9-]+\.trycloudflare\.com' "$1" | head -1)
+              [ -n "$URL" ] && { echo "$URL"; return 0; }
+              sleep 2
+            done
+            return 1
+          }
+
+          cloudflared tunnel --no-autoupdate --url "http://localhost:${PORT}" > /tmp/api-tunnel.log 2>&1 &
+          API_URL=$(grab_url /tmp/api-tunnel.log) || { echo "API tunnel failed"; cat /tmp/api-tunnel.log; exit 1; }
+
+          cloudflared tunnel --no-autoupdate --url "http://localhost:${NOVNC_PORT}" > /tmp/vnc-tunnel.log 2>&1 &
+          VNC_URL=$(grab_url /tmp/vnc-tunnel.log) || VNC_URL=''
+
+          echo "api_url=$API_URL" >> "$GITHUB_OUTPUT"
+          echo "vnc_url=$VNC_URL" >> "$GITHUB_OUTPUT"
+          echo "API tunnel: $API_URL"
+          echo "VNC tunnel: $VNC_URL"
+
+      - name: Publish connection details
+        env:
+          TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          API="${{ steps.tunnel.outputs.api_url }}"
+          VNC="${{ steps.tunnel.outputs.vnc_url }}"
+          {
+            echo '## Canva server is live'
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| API | \`$API\` |"
+            echo "| Web UI | [$API/?token=…]($API) |"
+            [ -n "$VNC" ] && echo "| Watch the browser | [$VNC/vnc.html?autoconnect=1&resize=scale]($VNC/vnc.html?autoconnect=1&resize=scale) |"
+            echo "| API token | \`$TOKEN\` |"
+            echo
+            echo '### Open a Canva session'
+            echo '```bash'
+            echo "curl -X POST $API/api/canva-ui/session \\"
+            echo "  -H 'Authorization: Bearer $TOKEN' \\"
+            echo "  -H 'Content-Type: application/json' \\"
+            echo "  -d \"{\\\"cookies\\\": \\\"\$(cat cookies.txt)\\\"}\""
+            echo '```'
+            echo
+            echo "Open the web UI with the token appended: \`$API/?token=$TOKEN\`"
+            echo
+            echo '> **This run is publicly reachable.** On a public repository the'
+            echo '> job log and summary are world-readable, so the tunnel URL and'
+            echo '> token above are too. Anyone with them can drive this browser'
+            echo '> and read its screenshots while the run is alive. Cancel the run'
+            echo '> when you are done, and do not leave a Canva session open in it.'
+            echo
+            echo 'Cookies are only ever sent to this URL at runtime — nothing is stored in the repo.' 
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Connection details written to the job summary."
+
+      - name: Hold the tunnel open
+        run: |
+          MINUTES="${{ inputs.minutes }}"
+          echo "Holding for ${MINUTES} minutes. Cancel the run to stop early."
+          END=$(( $(date +%s) + MINUTES * 60 ))
+          while [ "$(date +%s)" -lt "$END" ]; do
+            if ! curl -sf "http://127.0.0.1:${PORT}/healthz" >/dev/null; then
+              echo "Server died — tail of its log:"; tail -40 /tmp/server.log; exit 1
+            fi
+            SESSIONS=$(curl -s -H "Authorization: Bearer ${{ steps.token.outputs.token }}" \
+              "http://127.0.0.1:${PORT}/api/canva-ui/sessions" | head -c 300)
+            echo "[$(date -u +%H:%M:%S)] alive — sessions: $SESSIONS"
+            sleep 60
+          done
+          echo "Time is up."
+
+      - name: Logs and screenshots
+        if: always()
+        run: |
+          echo "=== server ==="; tail -80 /tmp/server.log 2>/dev/null || true
+          echo "=== api tunnel ==="; tail -20 /tmp/api-tunnel.log 2>/dev/null || true
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canva-server-${{ github.run_id }}
+          path: |
+            .canva-debug/
+            /tmp/server.log
+          retention-days: 7
+          if-no-files-found: warn

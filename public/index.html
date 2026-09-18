@@ -239,6 +239,24 @@
 </div>
 
 <script type="module">
+/* When the server runs behind a token (e.g. exposed over a tunnel), accept it
+   from ?token=… once, then keep using it. */
+const API_TOKEN_KEY = "canva.apiToken";
+(function captureApiToken() {
+  try {
+    const t = new URLSearchParams(location.search).get("token");
+    if (t) {
+      localStorage.setItem(API_TOKEN_KEY, t);
+      const url = new URL(location.href);
+      url.searchParams.delete("token");
+      history.replaceState(null, "", url.pathname + url.search + url.hash);
+    }
+  } catch { /* storage may be unavailable */ }
+})();
+const apiToken = () => {
+  try { return localStorage.getItem(API_TOKEN_KEY) || ""; } catch { return ""; }
+};
+
 const TOKEN_KEY = "canva.accessToken";
 const EXP_KEY = "canva.expiresAt";
 const $ = (id) => document.getElementById(id);
@@ -265,6 +283,15 @@ function headers(json = false) {
   const h = {};
   if (json) h["Content-Type"] = "application/json";
   if (getToken()) h["x-canva-token"] = getToken();
+  if (apiToken()) h["Authorization"] = `Bearer ${apiToken()}`;
+  return h;
+}
+
+/** Same as headers(), for the Canva-share calls which don't send a Canva token. */
+function apiHeaders(json = true) {
+  const h = {};
+  if (json) h["Content-Type"] = "application/json";
+  if (apiToken()) h["Authorization"] = `Bearer ${apiToken()}`;
   return h;
 }
 
@@ -288,7 +315,7 @@ async function refreshStatus() {
   $("connectPanel").classList.toggle("hide", canvaOk);
 
   try {
-    const r = await fetch("/api/instagram/account");
+    const r = await fetch("/api/instagram/account", { headers: apiHeaders(false) });
     const j = await r.json();
     if (r.ok) {
       const q = j.quota ? ` · ${j.quota.quotaUsage}/${j.quota.quotaTotal} today` : "";
@@ -486,7 +513,7 @@ $("checkCookiesBtn").onclick = async () => {
   el.textContent = "checking…"; el.style.color = "";
   try {
     const r = await fetch("/api/canva-ui/check-cookies", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: apiHeaders(),
       body: JSON.stringify({ cookies: $("cookies").value }),
     });
     const j = await r.json();
@@ -556,7 +583,7 @@ $("openBtn").onclick = async () => {
 
   try {
     const res = await fetch("/api/canva-ui/open", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: apiHeaders(),
       body: JSON.stringify(body),
     });
     await readSse(res, handleOpenEvent);
@@ -573,7 +600,7 @@ $("codeBtn").onclick = async () => {
   uiLog(`  · Submitting code…`);
   try {
     const res = await fetch(`/api/canva-ui/${sessionId}/code`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: apiHeaders(),
       body: JSON.stringify({ code }),
     });
     await readSse(res, handleOpenEvent);
@@ -606,7 +633,7 @@ async function choosePlatform(platform, btn) {
   uiLog(`  · Selecting ${platform}…`);
   try {
     const r = await fetch(`/api/canva-ui/${sessionId}/platform`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: apiHeaders(),
       body: JSON.stringify({ platform }),
     });
     const j = await r.json();
@@ -661,7 +688,7 @@ async function chooseAccount(handle, btn, platform) {
   uiLog(`  · Switching to ${handle}…`);
   try {
     const r = await fetch(`/api/canva-ui/${sessionId}/account`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: apiHeaders(),
       body: JSON.stringify({ handle }),
     });
     const j = await r.json();
@@ -678,7 +705,7 @@ $("captionBtn").onclick = async () => {
   $("captionStatus").textContent = "typing…"; $("captionStatus").style.color = "";
   try {
     const r = await fetch(`/api/canva-ui/${sessionId}/caption`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: apiHeaders(),
       body: JSON.stringify({ caption }),
     });
     const j = await r.json();
@@ -697,7 +724,7 @@ $("uploadBtn").onclick = async () => {
   $("uploadBtn").disabled = true;
   uiLog("→ Uploading…", "d");
   try {
-    const res = await fetch(`/api/canva-ui/${sessionId}/upload`, { method: "POST" });
+    const res = await fetch(`/api/canva-ui/${sessionId}/upload`, { method: "POST", headers: apiHeaders(false) });
     await readSse(res, (name, d) => {
       if (name === "progress") uiLog(`  · ${d.step}${d.detail ? " — " + d.detail : ""}`);
       else if (name === "error") uiLog("✗ " + d.message, "e");
@@ -716,7 +743,7 @@ $("uploadBtn").onclick = async () => {
 
 $("closeBtn").onclick = async () => {
   if (!sessionId) return;
-  await fetch(`/api/canva-ui/${sessionId}/close`, { method: "POST" });
+  await fetch(`/api/canva-ui/${sessionId}/close`, { method: "POST", headers: apiHeaders(false) });
   uiLog("Browser closed.", "d");
   sessionId = null;
   setStep(2, false); setStep(3, false); setStep(4, false); setStep(1, true);

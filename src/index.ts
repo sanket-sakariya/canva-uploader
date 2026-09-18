@@ -5,6 +5,7 @@ import { config } from "./config.js";
 import { ApiError } from "./lib/http.js";
 import { HttpError } from "./lib/errors.js";
 import { log } from "./lib/logger.js";
+import { announce, requireToken } from "./lib/auth.js";
 import { apiRouter } from "./routes/api.js";
 import { authRouter } from "./routes/auth.js";
 import { mediaRouter } from "./routes/media.js";
@@ -21,9 +22,9 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.static(resolve(here, "../public")));
 
 app.use("/auth", authRouter);
-app.use("/api", apiRouter);
+app.use("/api", requireToken, apiRouter);
 app.use("/media", mediaRouter);
-app.use("/api/canva-ui", canvaUiRouter);
+app.use("/api/canva-ui", requireToken, canvaUiRouter);
 
 app.get("/healthz", (_req, res) => res.json({ ok: true, mediaMode: config.mediaMode }));
 
@@ -38,6 +39,7 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 async function boot(): Promise<void> {
   mediaStore.startJanitor();
   liveSessions.startJanitor();
+  announce();
 
   const token = await tokens.load();
   log.info(`Canva: ${token ? "connected" : "not connected — open /auth/canva"}`);
