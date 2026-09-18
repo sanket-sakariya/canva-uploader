@@ -21,6 +21,10 @@ on:
         default: '30'
         type: string
 
+permissions:
+  contents: read
+  issues: write
+
 env:
   DISPLAY: ':99'
   CHROMIUM_VERSION: '149.0.7827.53-1'
@@ -145,6 +149,48 @@ jobs:
           echo "API tunnel: $API_URL"
           echo "VNC tunnel: $VNC_URL"
 
+      # The job summary and logs are not readable through the API while a run
+      # is in progress, which is precisely when the tunnel URL is needed. An
+      # issue comment is, so the details go there too.
+      - name: Publish connection details to an issue
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TOKEN: ${{ steps.token.outputs.token }}
+        run: |
+          API="${{ steps.tunnel.outputs.api_url }}"
+          VNC="${{ steps.tunnel.outputs.vnc_url }}"
+          BODY=$(cat <<EOF
+          Canva server is live for run [\`${{ github.run_id }}\`](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+
+          | | |
+          |---|---|
+          | API | \`$API\` |
+          | Web UI | $API/?token=$TOKEN |
+          | Watch the browser | ${VNC:+$VNC/vnc.html?autoconnect=1&resize=scale} |
+          | API token | \`$TOKEN\` |
+
+          Open a session:
+
+          \`\`\`bash
+          curl -X POST $API/api/canva-ui/session \\
+            -H 'Authorization: Bearer $TOKEN' \\
+            -H 'Content-Type: application/json' \\
+            -d "{\"cookies\": \"\$(cat cookies.txt)\"}"
+          \`\`\`
+
+          > **Publicly reachable.** On a public repository this issue, the job log
+          > and the summary are world-readable, so the URL and token above are too.
+          > Anyone with them can drive this browser and read its screenshots while
+          > the run is alive. Cancel the run when you are done.
+          EOF
+          )
+          NUM=$(gh issue create -R "${{ github.repository }}" \
+            --title "Canva server tunnel — run ${{ github.run_id }}" \
+            --body "$BODY" | grep -oE '[0-9]+$')
+          echo "issue=$NUM" >> "$GITHUB_OUTPUT"
+          echo "Connection details published to issue #$NUM"
+
       - name: Publish connection details
         env:
           TOKEN: ${{ steps.token.outputs.token }}
@@ -196,6 +242,18 @@ jobs:
             sleep 60
           done
           echo "Time is up."
+
+      - name: Close the tunnel issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NUM="${{ steps.issue.outputs.issue }}"
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" -R "${{ github.repository }}" \
+              --body "Run finished — this tunnel and token are dead." || true
+            gh issue close "$NUM" -R "${{ github.repository }}" || true
+          fi
 
       - name: Logs and screenshots
         if: always()
