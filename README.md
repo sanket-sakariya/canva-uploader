@@ -266,6 +266,60 @@ export pipeline.
 
 ---
 
+## Session API — open a Canva account from cookies, then drive it
+
+Post cookies, get a live browser session back, then operate on it by id. The
+browser stays open until you close it or it idles out (15 min).
+
+```bash
+# 1. open the account those cookies belong to
+SID=$(curl -s -X POST localhost:3000/api/canva-ui/session \
+  -H 'Content-Type: application/json' \
+  -d "{\"cookies\": \"$(cat cookies.txt)\"}" | jq -r .session.id)
+
+# 2. confirm whose account it is
+curl -s localhost:3000/api/canva-ui/session/$SID/whoami
+# {"ok":true,"user":{"name":"Sanket","email":"…@gmail.com"}}
+
+# 3. list their designs
+curl -s "localhost:3000/api/canva-ui/session/$SID/designs?limit=10"
+
+# 4. open one and see where Canva can post it
+curl -s -X POST localhost:3000/api/canva-ui/session/$SID/design \
+  -H 'Content-Type: application/json' -d '{"designId":"DAGxxxxxxxxx"}'
+
+# 5. drive the publish steps on that same session
+curl -s -X POST localhost:3000/api/canva-ui/$SID/platform -d '{"platform":"Instagram"}' -H 'Content-Type: application/json'
+curl -s -X POST localhost:3000/api/canva-ui/$SID/caption  -d '{"caption":"hello"}'    -H 'Content-Type: application/json'
+curl -s -N -X POST localhost:3000/api/canva-ui/$SID/upload
+
+# 6. done
+curl -s -X POST localhost:3000/api/canva-ui/$SID/close
+```
+
+| Route | Purpose |
+|---|---|
+| `POST /api/canva-ui/session` | open a browser on the account the cookies belong to (`designId` optional; `email`+`password` also accepted) |
+| `GET /api/canva-ui/session/:id` | state, current URL, idle time |
+| `GET /api/canva-ui/session/:id/whoami` | the signed-in name + email |
+| `GET /api/canva-ui/session/:id/designs` | designs from the projects page |
+| `POST /api/canva-ui/session/:id/design` | open a design, return the destinations Canva offers |
+| `POST /api/canva-ui/session/:id/goto` | navigate anywhere on canva.com |
+| `GET /api/canva-ui/session/:id/screenshot` | PNG of what the browser is looking at |
+| `GET /api/canva-ui/sessions` | every open session |
+| `POST /api/canva-ui/:id/close` | close it |
+
+`goto` refuses anything outside `canva.com` — the session carries the user's
+Canva cookies, and a driven browser should not be steerable onto a third-party
+origin.
+
+`whoami` is its own call because it navigates to the account settings page and
+back. That is deliberate: the home page renders design filenames into
+aria-labels, so scraping the app chrome for an email returns whatever the user
+happened to name a file. The settings page is the only trustworthy source.
+
+---
+
 ## Route B in CI — GitHub Actions
 
 `.github/workflows/canva-publish.yml` runs the same flow unattended on a runner.

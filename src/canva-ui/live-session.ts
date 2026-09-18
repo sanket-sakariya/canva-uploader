@@ -8,10 +8,11 @@ import type { BrowserContext, Page } from "playwright";
 import { log } from "../lib/logger.js";
 import { openEphemeralContext } from "./session.js";
 import type { PwCookie } from "./cookies.js";
-import type { AccountOption, ConnectedAccount, SharePlatform } from "./discover.js";
+import type { AccountOption, CanvaUser, ConnectedAccount, SharePlatform } from "./discover.js";
 
 export type SessionState =
   | "opening"
+  | "ready"
   | "awaiting-code"
   | "picking"
   | "composing"
@@ -23,7 +24,10 @@ export interface LiveSession {
   id: string;
   context: BrowserContext;
   page: Page;
-  designId: string;
+  /** Unset until a design is opened — a session can exist just to browse. */
+  designId?: string;
+  /** Who Canva says is signed in. */
+  user?: CanvaUser;
   designTitle?: string;
   state: SessionState;
   platforms: SharePlatform[];
@@ -37,7 +41,7 @@ export interface LiveSession {
 const IDLE_MS = 15 * 60 * 1000;
 const sessions = new Map<string, LiveSession>();
 
-export async function create(cookies: PwCookie[] | null, designId: string): Promise<LiveSession> {
+export async function create(cookies: PwCookie[] | null, designId?: string): Promise<LiveSession> {
   const context = await openEphemeralContext(cookies ?? [], { headless: false });
   const page = context.pages()[0] ?? (await context.newPage());
   const session: LiveSession = {
@@ -51,7 +55,7 @@ export async function create(cookies: PwCookie[] | null, designId: string): Prom
     lastUsed: Date.now(),
   };
   sessions.set(session.id, session);
-  log.info(`Live Canva session ${session.id.slice(0, 8)} opened for ${designId}`);
+  log.info(`Live Canva session ${session.id.slice(0, 8)} opened${designId ? ` for ${designId}` : ""}`);
   return session;
 }
 
@@ -72,13 +76,34 @@ export async function close(id: string): Promise<void> {
   log.info(`Live Canva session ${id.slice(0, 8)} closed`);
 }
 
-export function list(): Array<Pick<LiveSession, "id" | "designId" | "state" | "platform">> {
-  return [...sessions.values()].map((s) => ({
+export interface SessionSummary {
+  id: string;
+  state: SessionState;
+  user?: CanvaUser;
+  designId?: string;
+  designTitle?: string;
+  platform?: string;
+  account?: string;
+  openedAt: string;
+  idleSeconds: number;
+}
+
+export function describe(s: LiveSession): SessionSummary {
+  return {
     id: s.id,
-    designId: s.designId,
     state: s.state,
+    user: s.user,
+    designId: s.designId,
+    designTitle: s.designTitle,
     platform: s.platform,
-  }));
+    account: s.account?.handle,
+    openedAt: new Date(s.createdAt).toISOString(),
+    idleSeconds: Math.round((Date.now() - s.lastUsed) / 1000),
+  };
+}
+
+export function list(): SessionSummary[] {
+  return [...sessions.values()].map(describe);
 }
 
 /** Idle sessions hold a real Chrome window open, so reap them. */

@@ -37,6 +37,14 @@ export interface SharePlatform {
   social: boolean;
 }
 
+/** Who Canva says is signed in, read off the UI. */
+export interface CanvaUser {
+  name?: string;
+  email?: string;
+  /** The raw label we scraped, for when the parse is imperfect. */
+  raw?: string;
+}
+
 export interface AccountOption {
   handle: string;
   /** True when this is the one Canva currently has selected. */
@@ -341,4 +349,91 @@ export async function selectAccount(page: Page, handle: string): Promise<Connect
 export async function dismissAccountPicker(page: Page): Promise<void> {
   await page.keyboard.press("Escape").catch(() => {});
   await page.waitForTimeout(800);
+}
+
+
+/**
+ * Reads the signed-in Canva user from the account settings page.
+ *
+ * Deliberately *not* scraped from the app chrome: the home page renders design
+ * filenames in aria-labels, and this account happens to own a file named after
+ * an email address — so a chrome sweep confidently returns the wrong answer.
+ * The settings page states name and email as label/value pairs, which is the
+ * only place worth trusting.
+ *
+ * Navigates, so call it when moving the page is acceptable.
+ */
+export async function detectCanvaUser(page: Page): Promise<CanvaUser | undefined> {
+  await page
+    .goto("https://www.canva.com/settings/your-account", { waitUntil: "domcontentloaded", timeout: 60_000 })
+    .catch(() => {});
+  await page.waitForTimeout(6_000);
+
+  const lines = await page
+    .evaluate(() =>
+      (document.body.innerText || "")
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean),
+    )
+    .catch(() => [] as string[]);
+
+  /** The settings page renders "Name" then the value on the next line. */
+  const valueAfter = (label: RegExp): string | undefined => {
+    const i = lines.findIndex((l) => label.test(l));
+    if (i === -1) return undefined;
+    const next = lines[i + 1];
+    // "Edit" is the adjacent button; a real value never equals it.
+    return next && !/^edit$/i.test(next) ? next : undefined;
+  };
+
+  const email = valueAfter(/^email address$/i);
+  const name = valueAfter(/^name$/i);
+  if (!email && !name) return undefined;
+  return { name, email, raw: [name, email].filter(Boolean).join(" · ") };
+}
+
+/** Lists the user's designs straight from Canva's projects page. */
+export interface DesignSummary {
+  id: string;
+  title?: string;
+  url: string;
+}
+
+export async function listDesignsFromUi(page: Page, limit = 30): Promise<DesignSummary[]> {
+  await page.goto("https://www.canva.com/projects", { waitUntil: "domcontentloaded", timeout: 60_000 });
+  await page.waitForTimeout(6_000);
+
+  const rows = await page
+    .evaluate(() => {
+      const out: Array<{ href: string; title: string }> = [];
+      for (const a of Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/design/"]'))) {
+        const href = a.href;
+        if (!href.includes("/design/")) continue;
+        const title = (a.getAttribute("aria-label") || a.textContent || "").trim().slice(0, 120);
+        out.push({ href, title });
+      }
+      return out;
+    })
+    .catch(() => [] as Array<{ href: string; title: string }>);
+
+  const seen = new Set<string>();
+  const designs: DesignSummary[] = [];
+  for (const row of rows) {
+    // Canva links designs as /design/editor/shell?designId=DAG… — the path
+    // segment is literally "editor", so the query param is the real id.
+    let id: string | undefined;
+    try {
+      id = new URL(row.href).searchParams.get("designId") ?? undefined;
+    } catch {
+      /* fall through to the path form */
+    }
+    id ??= row.href.match(/\/design\/(?!editor\b)([A-Za-z0-9_-]+)/)?.[1];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    designs.push({ id, title: row.title || undefined, url: `https://www.canva.com/design/${id}/edit` });
+    if (designs.length >= limit) break;
+  }
+  log.info(`Found ${designs.length} design(s) in the Canva projects page`);
+  return designs;
 }

@@ -11,6 +11,8 @@ import {
   listAccounts,
   selectAccount,
   dismissAccountPicker,
+  detectCanvaUser,
+  listDesignsFromUi,
 } from "../canva-ui/discover.js";
 import { clickPublishAndWait, typeCaption, publishViaCanvaUi, StepError } from "../canva-ui/publisher.js";
 import { loginWithPassword, submitCode } from "../canva-ui/login.js";
@@ -55,6 +57,183 @@ canvaUiRouter.post("/check-cookies", (req, res) => {
         ? undefined
         : "No obvious Canva session cookie found. Copy the whole `Cookie:` request header — httpOnly cookies don't appear in document.cookie.",
     });
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+/* ── session API · open a Canva account from cookies, then drive it ──── */
+
+/**
+ * Opens Chrome on the Canva account the supplied cookies belong to and leaves
+ * it open. No design required — this is the "give me a live Canva session"
+ * primitive; everything else below operates on the session id it returns.
+ */
+canvaUiRouter.post("/session", async (req, res) => {
+  const { cookies, email, password, designId } = req.body as {
+    cookies?: string;
+    email?: string;
+    password?: string;
+    designId?: string;
+  };
+  let sessionId: string | undefined;
+
+  try {
+    let session: live.LiveSession;
+
+    if (email && password) {
+      session = await live.create(null, designId);
+      sessionId = session.id;
+      const result = await loginWithPassword(session.page, email, password);
+      if (result.state === "need-code") {
+        session.state = "awaiting-code";
+        return res.status(202).json({
+          ok: false,
+          needsCode: true,
+          sessionId: session.id,
+          codeSource: result.codeSource,
+          message: result.detail,
+        });
+      }
+      if (result.state === "error") throw new Error(result.detail ?? "Canva sign-in failed.");
+    } else {
+      const parsed = parseCookies(cookies ?? "");
+      log.info(`Canva session open: ${describe(parsed)}`);
+      session = await live.create(parsed.cookies, designId);
+      sessionId = session.id;
+
+      if (!(await isLoggedIn(session.page))) {
+        throw new Error(
+          "Those cookies did not produce a signed-in Canva session. Re-copy the full `Cookie:` header from a canva.com request.",
+        );
+      }
+    }
+
+    session.state = "ready";
+    await snap(session.page, "session-open");
+
+    if (designId) {
+      session.designId = designId;
+      await session.page.goto(`https://www.canva.com/design/${designId}/edit`, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
+      await session.page.waitForTimeout(7_000);
+      session.designTitle = await session.page.title().catch(() => undefined);
+    }
+
+    res.json({ ok: true, session: live.describe(session), url: session.page.url() });
+  } catch (err) {
+    if (sessionId) await live.close(sessionId).catch(() => {});
+    fail(res, err);
+  }
+});
+
+/**
+ * Who this session is signed in as. Separate endpoint because it navigates to
+ * the settings page to get a trustworthy answer.
+ */
+canvaUiRouter.get("/session/:id/whoami", async (req, res) => {
+  try {
+    const session = live.get(req.params.id as string);
+    const before = session.page.url();
+    const user = await detectCanvaUser(session.page);
+    session.user = user;
+    // Put the browser back where it was so the caller's flow is undisturbed.
+    await session.page.goto(before, { waitUntil: "domcontentloaded", timeout: 60_000 }).catch(() => {});
+    await session.page.waitForTimeout(2_000);
+
+    if (!user) {
+      return res.json({ ok: false, message: "Could not read the account from Canva's settings page." });
+    }
+    res.json({ ok: true, user });
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+/** Current state of one session. */
+canvaUiRouter.get("/session/:id", (req, res) => {
+  try {
+    const session = live.get(req.params.id as string);
+    res.json({ ok: true, session: live.describe(session), url: session.page.url() });
+  } catch (err) {
+    fail(res, err, 404);
+  }
+});
+
+/** The designs Canva shows on the projects page for this account. */
+canvaUiRouter.get("/session/:id/designs", async (req, res) => {
+  try {
+    const session = live.get(req.params.id as string);
+    const limit = Number.parseInt(String(req.query.limit ?? "30"), 10) || 30;
+    const designs = await listDesignsFromUi(session.page, limit);
+    res.json({ ok: true, count: designs.length, designs });
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+/** Opens a design in the live session and reads the share destinations. */
+canvaUiRouter.post("/session/:id/design", async (req, res) => {
+  try {
+    const session = live.get(req.params.id as string);
+    const { designId } = req.body as { designId?: string };
+    if (!designId) throw new Error("`designId` is required.");
+
+    session.designId = designId;
+    await session.page.goto(`https://www.canva.com/design/${designId}/edit`, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    });
+    await session.page.waitForTimeout(7_000);
+    session.designTitle = await session.page.title().catch(() => undefined);
+    await snap(session.page, "session-design");
+
+    await openShareMenu(session.page);
+    session.platforms = await listSharePlatforms(session.page);
+    session.state = "picking";
+
+    res.json({
+      ok: true,
+      designId,
+      designTitle: session.designTitle,
+      platforms: session.platforms,
+    });
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+/** Navigate the live session anywhere on canva.com. */
+canvaUiRouter.post("/session/:id/goto", async (req, res) => {
+  try {
+    const session = live.get(req.params.id as string);
+    const { url } = req.body as { url?: string };
+    if (!url) throw new Error("`url` is required.");
+
+    // Keep the driven browser on Canva: it is carrying the user's session.
+    const target = new URL(url, "https://www.canva.com");
+    if (!/(^|\.)canva\.com$/.test(target.hostname)) {
+      throw new Error(`Refusing to navigate to ${target.hostname} — this session is scoped to canva.com.`);
+    }
+
+    await session.page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 60_000 });
+    await session.page.waitForTimeout(3_000);
+    res.json({ ok: true, url: session.page.url(), title: await session.page.title().catch(() => undefined) });
+  } catch (err) {
+    fail(res, err);
+  }
+});
+
+/** What the driven browser is looking at right now. */
+canvaUiRouter.get("/session/:id/screenshot", async (req, res) => {
+  try {
+    const session = live.get(req.params.id as string);
+    const buffer = await session.page.screenshot({ fullPage: false });
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(buffer);
   } catch (err) {
     fail(res, err);
   }
