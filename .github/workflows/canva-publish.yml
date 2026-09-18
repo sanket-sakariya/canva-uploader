@@ -1,0 +1,145 @@
+name: Canva Publish
+
+# Publishes a Canva design to a social account that is already connected inside
+# Canva, by driving Canva's own share flow in a browser. No Meta/Instagram API
+# token is involved.
+#
+# Why this shape:
+#  * Canva answers headless Chrome with a Cloudflare interstitial (HTTP 403,
+#    "Just a moment..."), and a headed window with HTTP 200. So the browser must
+#    be headed, and a runner has no display — hence Xvfb.
+#  * cf-autoclick clears the Turnstile checkbox, and Chrome refuses to load
+#    extensions in headless mode. Same constraint, same fix.
+#  * ungoogled-chromium + cf-autoclick is the identical stack the url-scraper
+#    workflows use, pinned to the same build so both behave the same way.
+
+on:
+  workflow_dispatch:
+    inputs:
+      design_id:
+        description: 'Canva design id (e.g. DAGxxxxxxxxx)'
+        required: true
+        type: string
+      platform:
+        description: 'Where to post — must already be connected in Canva'
+        required: false
+        default: 'Instagram'
+        type: choice
+        options: [Instagram, Facebook, YouTube, TikTok, WhatsApp, LinkedIn, Pinterest]
+      account:
+        description: 'Post as this handle (blank = whichever Canva has selected)'
+        required: false
+        type: string
+      caption:
+        description: 'Caption / description'
+        required: false
+        type: string
+      dry_run:
+        description: 'Walk the whole flow but do not click Publish'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  DISPLAY: ':99'
+  # Pinned to the same build as the url-scraper workflows, so Cloudflare
+  # behaviour is identical across both stacks.
+  CHROMIUM_VERSION: '149.0.7827.53-1'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        # The browser comes from the vendored ungoogled-chromium below, so
+        # Playwright's own browser download would be pure waste here.
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: npm ci
+
+      - name: Install Xvfb + browser libs
+        timeout-minutes: 5
+        run: |
+          sudo apt-get -o Acquire::Retries=6 update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            xvfb libnss3 libatk-bridge2.0-0 libatk1.0-0 libcups2 libdrm2 libgbm1 \
+            libgtk-3-0 libxcomposite1 libxdamage1 libxrandr2 libxkbcommon0 \
+            libpango-1.0-0 libasound2t64 fonts-liberation
+
+      - name: Start virtual display
+        run: |
+          # Headed is mandatory here: Cloudflare blocks headless, and Chrome
+          # will not load an unpacked extension without a display.
+          Xvfb :99 -screen 0 1440x900x24 -nolisten tcp &
+          for i in $(seq 1 20); do
+            [ -e /tmp/.X11-unix/X99 ] && break
+            sleep 0.5
+          done
+          test -e /tmp/.X11-unix/X99 && echo "Xvfb :99 ready"
+
+      - name: Setup ungoogled-chromium + cf-autoclick
+        timeout-minutes: 6
+        run: |
+          mkdir -p vendor
+          CHROMIUM_URL="https://github.com/ungoogled-software/ungoogled-chromium-portablelinux/releases/download/${CHROMIUM_VERSION}/ungoogled-chromium-${CHROMIUM_VERSION}-x86_64_linux.tar.xz"
+          curl -fsSL -o /tmp/chromium.tar.xz "$CHROMIUM_URL"
+          tar -xJf /tmp/chromium.tar.xz -C vendor/
+          mv vendor/ungoogled-chromium-* vendor/ungoogled-chromium
+          chmod +x vendor/ungoogled-chromium/chrome
+          vendor/ungoogled-chromium/chrome --version
+
+          git clone --depth 1 https://github.com/tenacious6/cf-autoclick.git vendor/cf-autoclick
+          test -f vendor/cf-autoclick/manifest.json
+          echo "cf-autoclick ready"
+
+      - name: Publish through Canva
+        timeout-minutes: 15
+        env:
+          CANVA_COOKIES: ${{ secrets.CANVA_COOKIES }}
+          CANVA_DESIGN_ID: ${{ inputs.design_id }}
+          CANVA_PLATFORM: ${{ inputs.platform }}
+          CANVA_ACCOUNT: ${{ inputs.account }}
+          CANVA_CAPTION: ${{ inputs.caption }}
+          CANVA_DRY_RUN: ${{ inputs.dry_run && '1' || '0' }}
+          CHROME_BIN: vendor/ungoogled-chromium/chrome
+          CF_AUTOCLICK_DIR: vendor/cf-autoclick
+          CHROME_NO_SANDBOX: '1'
+          LOG_LEVEL: debug
+        run: npm run ci:publish
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f .canva-debug/summary.json ]; then
+            cat .canva-debug/summary.json
+            {
+              echo '### Canva publish'
+              echo '```json'
+              cat .canva-debug/summary.json
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'No summary written — the run failed before it got that far.'
+          fi
+
+      # Screenshots are the only way to debug a selector break you cannot
+      # reproduce locally, since Canva's DOM has no API contract.
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canva-debug-${{ github.run_id }}
+          path: .canva-debug/
+          retention-days: 7
+          if-no-files-found: warn

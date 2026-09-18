@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.tokens.json
+media-cache/
+*.log
+tests/fixtures/
+.canva-profile/
+.canva-debug/
+vendor/

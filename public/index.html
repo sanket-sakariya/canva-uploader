@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canva → Instagram</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --panel: #fff; --ink: #1a1a19; --muted: #6b6b68;
+    --line: #e3e3e0; --accent: #7d2ae8; --accent-ink: #fff;
+    --ok: #0f7b4f; --err: #b42318; --warn: #9a6700;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#151514; --panel:#1e1e1c; --ink:#ececea; --muted:#9a9a96;
+            --line:#33332f; --ok:#4ade80; --err:#fca5a5; --warn:#fbbf24; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; }
+  .wrap { max-width: 60rem; margin: 0 auto; padding: 2rem 1rem 4rem; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:1.5rem; }
+  h1 { font-size:1.4rem; margin:0; letter-spacing:-.01em; }
+  .sub { color:var(--muted); font-size:.87rem; margin-top:.15rem; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:1.1rem; margin-bottom:1.1rem; }
+  .panel h2 { font-size:.78rem; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin:0 0 .8rem; font-weight:600; }
+  button { font:inherit; border-radius:8px; border:1px solid var(--line); background:var(--panel);
+           color:var(--ink); padding:.5rem .9rem; cursor:pointer; }
+  button:hover:not(:disabled) { border-color:var(--muted); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600; }
+  input[type=text], textarea, select {
+    font:inherit; width:100%; padding:.55rem .7rem; border-radius:8px;
+    border:1px solid var(--line); background:var(--bg); color:var(--ink); }
+  textarea { min-height:6.5rem; resize:vertical; }
+  label { display:block; font-size:.82rem; color:var(--muted); margin:0 0 .3rem; }
+  .row { display:flex; gap:.7rem; flex-wrap:wrap; align-items:flex-end; }
+  .row > * { flex:1 1 10rem; }
+  .pill { font-size:.76rem; padding:.2rem .55rem; border-radius:99px; border:1px solid var(--line); color:var(--muted); white-space:nowrap; }
+  .pill.on { color:var(--ok); border-color:currentColor; }
+  .pill.off { color:var(--err); border-color:currentColor; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(9.5rem,1fr)); gap:.7rem; max-height:26rem; overflow-y:auto; }
+  .card { border:1px solid var(--line); border-radius:10px; overflow:hidden; cursor:pointer; background:var(--bg); text-align:left; padding:0; }
+  .card.sel { border-color:var(--accent); box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+  .card img { display:block; width:100%; aspect-ratio:1; object-fit:cover; background:var(--line); }
+  .card .meta { padding:.45rem .55rem; }
+  .card .t { font-size:.8rem; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .card .p { font-size:.72rem; color:var(--muted); }
+  .log { font:12.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; background:var(--bg);
+         border:1px solid var(--line); border-radius:8px; padding:.7rem .8rem; max-height:18rem; overflow:auto; white-space:pre-wrap; word-break:break-word; }
+  .log .e { color:var(--err); } .log .s { color:var(--ok); } .log .w { color:var(--warn); } .log .d { color:var(--muted); }
+  .checks { display:flex; gap:1.1rem; flex-wrap:wrap; font-size:.85rem; align-items:center; }
+  .checks label { display:flex; gap:.35rem; align-items:center; margin:0; color:var(--ink); }
+  .checks input { width:auto; }
+  a { color:var(--accent); }
+  .hide { display:none !important; }
+  .stepbox { border:1px solid var(--line); border-radius:10px; padding:.9rem; margin-bottom:.7rem; background:var(--bg); }
+  .stepbox.off { opacity:.45; pointer-events:none; }
+  .stepbox.done { border-color:var(--ok); }
+  .stephead { font-weight:600; font-size:.92rem; margin-bottom:.5rem; display:flex; align-items:center; gap:.5rem; }
+  .stephead .num { display:inline-grid; place-items:center; width:1.35rem; height:1.35rem; border-radius:99px;
+                   background:var(--accent); color:#fff; font-size:.75rem; }
+  .stepbox.done .stephead .num { background:var(--ok); }
+  .pbtn { flex:0 0 auto; }
+  .pbtn.sel { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  .acct { font-size:.88rem; padding:.55rem .7rem; border-radius:8px; border:1px solid var(--line); }
+  .acct.ok { border-color:var(--ok); color:var(--ok); }
+  .acct.bad { border-color:var(--err); color:var(--err); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Canva → Instagram</h1>
+      <div class="sub">Export a design with the Connect API and post it. The editor never opens.</div>
+    </div>
+    <div class="row" style="flex:0 0 auto">
+      <span id="canvaPill" class="pill">Canva: checking…</span>
+      <span id="igPill" class="pill">Instagram: checking…</span>
+    </div>
+  </header>
+
+  <div class="panel" id="connectPanel">
+    <h2>1 · Connect Canva</h2>
+    <p class="sub" style="margin-top:0">
+      Authorizes this app against your Canva account (PKCE, scopes <code>design:meta:read</code> +
+      <code>design:content:read</code>). The token is kept in this browser and replayed to the local
+      server on each publish.
+    </p>
+    <div class="row" style="flex:0 0 auto">
+      <button class="primary" id="connectBtn" style="flex:0 0 auto">Connect Canva</button>
+      <button id="disconnectBtn" style="flex:0 0 auto">Disconnect</button>
+    </div>
+  </div>
+
+  <div class="panel" id="designPanel">
+    <h2>2 · Pick a design</h2>
+    <div class="row" style="margin-bottom:.8rem">
+      <input type="text" id="search" placeholder="Search your Canva designs…">
+      <button id="refreshBtn" style="flex:0 0 auto">Refresh</button>
+    </div>
+    <div class="grid" id="designs"></div>
+    <div class="sub" id="designHint" style="margin-top:.6rem">Connect Canva to load your designs.</div>
+  </div>
+
+  <div class="panel">
+    <h2>3 · Caption &amp; options</h2>
+    <label for="caption">Caption <span id="capCount" class="sub"></span></label>
+    <textarea id="caption" maxlength="2200" placeholder="Write your Instagram caption… #hashtags"></textarea>
+    <div class="row" style="margin-top:.8rem">
+      <div>
+        <label for="mode">Post type</label>
+        <select id="mode">
+          <option value="auto">Auto (carousel if multi-page)</option>
+          <option value="single">Single image (page 1)</option>
+          <option value="carousel">Carousel (up to 10 pages)</option>
+        </select>
+      </div>
+      <div>
+        <label for="pages">Pages (optional, e.g. 1,3)</label>
+        <input type="text" id="pages" placeholder="all pages">
+      </div>
+    </div>
+    <div class="checks" style="margin-top:.9rem">
+      <label><input type="checkbox" id="dryRun"> Dry run (export only, don't post)</label>
+      <label><input type="checkbox" id="ignoreAspect"> Ignore aspect-ratio check</label>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>4 · Publish</h2>
+    <button class="primary" id="publishBtn" disabled>Publish to Instagram</button>
+    <div class="log hide" id="log" style="margin-top:.9rem"></div>
+  </div>
+
+
+  <div class="panel" id="cookiePanel">
+    <h2>Post through Canva's own share flow</h2>
+    <p class="sub" style="margin-top:0">
+      Uses the social accounts already connected <em>inside</em> Canva — no Meta token.
+      Paste your Canva session; it goes into a throwaway Chrome window and is never written to disk.
+    </p>
+
+    <!-- step 1 -->
+    <div class="stepbox" id="box1">
+      <div class="stephead"><span class="num">1</span> Sign in to Canva</div>
+
+      <div class="row" style="gap:.4rem; margin-bottom:.7rem">
+        <button class="pbtn sel" id="tabCookies" type="button">Paste cookies</button>
+        <button class="pbtn" id="tabPassword" type="button">Email &amp; password</button>
+      </div>
+
+      <div id="paneCookies">
+        <details style="margin:.2rem 0 .7rem">
+          <summary class="sub" style="cursor:pointer">How to copy the right cookies</summary>
+          <ol class="sub" style="margin:.5rem 0 0; padding-left:1.1rem; line-height:1.7">
+            <li>Open <code>canva.com</code> while signed in</li>
+            <li>DevTools (<kbd>F12</kbd>) → <b>Network</b> → reload</li>
+            <li>Click any <code>canva.com</code> request</li>
+            <li>Under <b>Request Headers</b>, copy the whole <code>Cookie:</code> line</li>
+          </ol>
+          <p class="sub" style="margin:.5rem 0 0">
+            A <code>cookies.txt</code> export works too. Don't use <code>document.cookie</code> —
+            the session cookie is <code>httpOnly</code> and won't be there.
+          </p>
+        </details>
+        <textarea id="cookies" placeholder="Cookie: CID=...; CUI=...   — or a cookies.txt / JSON export"></textarea>
+        <div class="row" style="margin-top:.7rem; align-items:center">
+          <button id="checkCookiesBtn" style="flex:0 0 auto">Check cookies</button>
+          <span class="sub" id="cookieStatus" style="flex:1 1 auto"></span>
+        </div>
+      </div>
+
+      <div id="panePassword" class="hide">
+        <p class="sub" style="margin:.2rem 0 .6rem">
+          Signs in through Canva's own login page in the browser window. Canva often prefers a
+          one-time code over a password — if it does, you'll be asked for the code it emails you.
+        </p>
+        <div class="row">
+          <div><label for="canvaEmail">Email</label>
+            <input type="email" id="canvaEmail" autocomplete="off" placeholder="you@example.com"></div>
+          <div><label for="canvaPassword">Password</label>
+            <input type="password" id="canvaPassword" autocomplete="off" placeholder="••••••••"></div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:.7rem">
+        <div><label for="uiDesign">Design id</label>
+          <input type="text" id="uiDesign" placeholder="DAGxxxxxxxxx"></div>
+      </div>
+
+      <div id="paneCode" class="hide" style="margin-top:.8rem; padding:.7rem; border:1px solid var(--warn); border-radius:8px">
+        <div class="sub" id="codeMsg" style="color:var(--warn)"></div>
+        <div class="row" style="margin-top:.5rem; align-items:flex-end">
+          <div style="flex:0 0 12rem"><label for="canvaCode">Verification code</label>
+            <input type="text" id="canvaCode" inputmode="numeric" maxlength="8" placeholder="123456"></div>
+          <button class="primary" id="codeBtn" style="flex:0 0 auto">Submit code</button>
+        </div>
+      </div>
+
+      <button class="primary" id="openBtn" style="margin-top:.8rem">Open in Chrome</button>
+    </div>
+
+    <!-- step 2 -->
+    <div class="stepbox off" id="box2">
+      <div class="stephead"><span class="num">2</span> Choose where to post</div>
+      <div class="sub" id="platformHint">Waiting for Canva…</div>
+      <div id="platforms" class="row" style="margin-top:.6rem"></div>
+    </div>
+
+    <!-- step 3 -->
+    <div class="stepbox off" id="box3">
+      <div class="stephead"><span class="num">3</span> Account &amp; description</div>
+      <div class="sub" id="accountHint">Post as:</div>
+      <div id="accounts" class="row" style="margin:.45rem 0 .6rem"></div>
+      <div id="accountBox" class="acct"></div>
+      <label for="uiCaption" style="margin-top:.7rem">Description</label>
+      <textarea id="uiCaption" maxlength="2200" placeholder="Write your caption…"></textarea>
+      <div class="row" style="margin-top:.6rem; align-items:center">
+        <button id="captionBtn" style="flex:0 0 auto">Insert description</button>
+        <span class="sub" id="captionStatus" style="flex:1 1 auto"></span>
+      </div>
+    </div>
+
+    <!-- step 4 -->
+    <div class="stepbox off" id="box4">
+      <div class="stephead"><span class="num">4</span> Upload</div>
+      <div class="sub" id="uploadSummary"></div>
+      <div class="row" style="margin-top:.7rem">
+        <button class="primary" id="uploadBtn" style="flex:0 0 auto">Upload now</button>
+        <button id="closeBtn" style="flex:0 0 auto">Close browser</button>
+      </div>
+    </div>
+
+    <div class="log hide" id="uiLog" style="margin-top:.9rem"></div>
+  </div>
+</div>
+
+<script type="module">
+const TOKEN_KEY = "canva.accessToken";
+const EXP_KEY = "canva.expiresAt";
+const $ = (id) => document.getElementById(id);
+let selected = null;
+
+/* ── token lands here as a URL fragment after the OAuth callback ───────── */
+function captureTokenFromHash() {
+  if (!location.hash.startsWith("#")) return;
+  const p = new URLSearchParams(location.hash.slice(1));
+  const token = p.get("canva_access_token");
+  if (!token) return;
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.setItem(EXP_KEY, p.get("expires_at") ?? "");
+  history.replaceState(null, "", location.pathname); // don't leave it in the URL bar
+}
+
+const getToken = () => localStorage.getItem(TOKEN_KEY) || "";
+const tokenValid = () => {
+  const exp = Number(localStorage.getItem(EXP_KEY) || 0);
+  return Boolean(getToken()) && (!exp || Date.now() < exp);
+};
+
+function headers(json = false) {
+  const h = {};
+  if (json) h["Content-Type"] = "application/json";
+  if (getToken()) h["x-canva-token"] = getToken();
+  return h;
+}
+
+/* ── logging ──────────────────────────────────────────────────────────── */
+function logLine(text, cls = "") {
+  const el = $("log");
+  el.classList.remove("hide");
+  const span = document.createElement("div");
+  if (cls) span.className = cls;
+  span.textContent = text;
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+}
+const clearLog = () => { $("log").textContent = ""; $("log").classList.add("hide"); };
+
+/* ── status pills ─────────────────────────────────────────────────────── */
+async function refreshStatus() {
+  const canvaOk = tokenValid();
+  $("canvaPill").textContent = canvaOk ? "Canva: connected" : "Canva: not connected";
+  $("canvaPill").className = "pill " + (canvaOk ? "on" : "off");
+  $("connectPanel").classList.toggle("hide", canvaOk);
+
+  try {
+    const r = await fetch("/api/instagram/account");
+    const j = await r.json();
+    if (r.ok) {
+      const q = j.quota ? ` · ${j.quota.quotaUsage}/${j.quota.quotaTotal} today` : "";
+      $("igPill").textContent = `Instagram: ${j.username ? "@" + j.username : j.id}${q}`;
+      $("igPill").className = "pill on";
+    } else {
+      $("igPill").textContent = "Instagram: " + (j.message || "not configured");
+      $("igPill").className = "pill off";
+    }
+  } catch {
+    $("igPill").textContent = "Instagram: server unreachable";
+    $("igPill").className = "pill off";
+  }
+  updatePublishBtn();
+}
+
+/* ── designs ──────────────────────────────────────────────────────────── */
+async function loadDesigns() {
+  if (!tokenValid()) { $("designHint").textContent = "Connect Canva to load your designs."; return; }
+  $("designHint").textContent = "Loading…";
+  try {
+    const qs = new URLSearchParams();
+    if ($("search").value.trim()) qs.set("query", $("search").value.trim());
+    const r = await fetch("/api/designs?" + qs, { headers: headers() });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.message || "Failed to list designs");
+
+    const grid = $("designs");
+    grid.textContent = "";
+    for (const d of j.items) {
+      const card = document.createElement("button");
+      card.className = "card";
+      card.type = "button";
+      const img = document.createElement("img");
+      img.src = d.thumbnail || "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+      img.alt = "";
+      img.loading = "lazy";
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const t = document.createElement("div"); t.className = "t"; t.textContent = d.title;
+      const p = document.createElement("div"); p.className = "p";
+      p.textContent = `${d.pageCount} page${d.pageCount === 1 ? "" : "s"} · ${d.id}`;
+      meta.append(t, p);
+      card.append(img, meta);
+      card.onclick = () => {
+        selected = d;
+        for (const c of grid.children) c.classList.remove("sel");
+        card.classList.add("sel");
+        $("designHint").textContent = `Selected: ${d.title} (${d.id})`;
+        updatePublishBtn();
+      };
+      grid.append(card);
+    }
+    $("designHint").textContent = j.items.length ? `${j.items.length} design(s). Click one.` : "No designs found.";
+  } catch (err) {
+    $("designHint").textContent = "Error: " + err.message;
+  }
+}
+
+const updatePublishBtn = () => { $("publishBtn").disabled = !(selected && tokenValid()); };
+
+/* ── publish (SSE so each step shows up live) ─────────────────────────── */
+async function publish() {
+  clearLog();
+  $("publishBtn").disabled = true;
+
+  const pages = $("pages").value.split(",").map((s) => parseInt(s.trim(), 10)).filter(Number.isInteger);
+  const body = {
+    designId: selected.id,
+    caption: $("caption").value.trim() || undefined,
+    mode: $("mode").value,
+    pages: pages.length ? pages : undefined,
+    dryRun: $("dryRun").checked,
+    ignoreAspectRatio: $("ignoreAspect").checked,
+  };
+
+  logLine(`→ ${body.dryRun ? "Dry run" : "Publishing"} "${selected.title}" (${selected.id})`, "d");
+
+  try {
+    const res = await fetch("/api/publish/stream", {
+      method: "POST", headers: headers(true), body: JSON.stringify(body),
+    });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() ?? "";
+      for (const chunk of chunks) handleEvent(chunk);
+    }
+  } catch (err) {
+    logLine("✗ " + err.message, "e");
+  } finally {
+    updatePublishBtn();
+    refreshStatus();
+  }
+}
+
+function handleEvent(chunk) {
+  const evLine = chunk.split("\n").find((l) => l.startsWith("event: "));
+  const dataLine = chunk.split("\n").find((l) => l.startsWith("data: "));
+  if (!evLine || !dataLine) return;
+  const event = evLine.slice(7).trim();
+  let data; try { data = JSON.parse(dataLine.slice(6)); } catch { return; }
+
+  if (event === "progress") {
+    logLine(`  · ${data.step}${data.detail ? " — " + data.detail : ""}`);
+  } else if (event === "error") {
+    logLine("✗ " + data.message, "e");
+  } else if (event === "done") {
+    for (const w of data.warnings ?? []) logLine("  ! " + w, "w");
+    for (const img of data.images ?? []) {
+      if (img.dimensions) logLine(`  · page ${img.page}: ${img.dimensions.width}×${img.dimensions.height} (${img.aspectRatio}:1)`, "d");
+    }
+    if (data.dryRun) {
+      logLine(`✓ Dry run OK — ${data.images.length} image(s) exported, nothing posted.`, "s");
+    } else {
+      logLine(`✓ Published as ${data.mode}. Media id ${data.mediaId}`, "s");
+      if (data.permalink) {
+        const a = document.createElement("a");
+        a.href = data.permalink; a.target = "_blank"; a.rel = "noreferrer";
+        a.textContent = data.permalink;
+        const line = document.createElement("div");
+        line.append("  → ", a);
+        $("log").append(line);
+      }
+    }
+    logLine(`  took ${(data.elapsedMs / 1000).toFixed(1)}s`, "d");
+  }
+}
+
+/* ── wiring ───────────────────────────────────────────────────────────── */
+$("connectBtn").onclick = () => (location.href = "/auth/canva");
+$("disconnectBtn").onclick = async () => {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(EXP_KEY);
+  await fetch("/auth/logout", { method: "POST" });
+  selected = null;
+  $("designs").textContent = "";
+  refreshStatus();
+};
+$("refreshBtn").onclick = loadDesigns;
+$("search").addEventListener("keydown", (e) => { if (e.key === "Enter") loadDesigns(); });
+$("caption").addEventListener("input", (e) => {
+  $("capCount").textContent = `${e.target.value.length}/2200`;
+});
+$("publishBtn").onclick = publish;
+
+
+/* ── Canva-share stepper (cookies → platform → caption → upload) ─────── */
+let sessionId = null;
+
+function uiLog(text, cls = "") {
+  const el = $("uiLog");
+  el.classList.remove("hide");
+  const d = document.createElement("div");
+  if (cls) d.className = cls;
+  d.textContent = text;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
+const setStep = (n, on, done = false) => {
+  const box = $("box" + n);
+  box.classList.toggle("off", !on);
+  box.classList.toggle("done", done);
+};
+
+/** Reads an SSE response, calling back per event. */
+async function readSse(res, onEvent) {
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    const parts = buf.split("\n\n"); buf = parts.pop() ?? "";
+    for (const chunk of parts) {
+      const ev = chunk.split("\n").find(l => l.startsWith("event: "));
+      const da = chunk.split("\n").find(l => l.startsWith("data: "));
+      if (!ev || !da) continue;
+      let d; try { d = JSON.parse(da.slice(6)); } catch { continue; }
+      onEvent(ev.slice(7).trim(), d);
+    }
+  }
+}
+
+/* step 0 — cookie sanity check */
+$("checkCookiesBtn").onclick = async () => {
+  const el = $("cookieStatus");
+  el.textContent = "checking…"; el.style.color = "";
+  try {
+    const r = await fetch("/api/canva-ui/check-cookies", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cookies: $("cookies").value }),
+    });
+    const j = await r.json();
+    if (!j.ok) { el.textContent = "✗ " + j.message; el.style.color = "var(--err)"; return; }
+    el.style.color = j.looksLikeSession ? "var(--ok)" : "var(--warn)";
+    el.textContent = `${j.looksLikeSession ? "✓" : "!"} ${j.count} cookie(s) [${j.format}]` +
+      (j.hint ? ` — ${j.hint}` : " — session cookie found");
+  } catch (e) { el.textContent = "✗ " + e.message; el.style.color = "var(--err)"; }
+};
+
+/* auth mode toggle */
+let authMode = "cookies";
+function setAuthMode(mode) {
+  authMode = mode;
+  $("tabCookies").classList.toggle("sel", mode === "cookies");
+  $("tabPassword").classList.toggle("sel", mode === "password");
+  $("paneCookies").classList.toggle("hide", mode !== "cookies");
+  $("panePassword").classList.toggle("hide", mode !== "password");
+}
+$("tabCookies").onclick = () => setAuthMode("cookies");
+$("tabPassword").onclick = () => setAuthMode("password");
+
+/** Everything that happens once Canva reports the design is ready. */
+function onReady(d) {
+  sessionId = d.sessionId;
+  uiLog(`✓ Ready — ${d.platforms.length} destination(s) offered`, "s");
+  $("paneCode").classList.add("hide");
+  renderPlatforms(d.platforms);
+  setStep(1, true, true); setStep(2, true);
+}
+
+function handleOpenEvent(name, d) {
+  if (name === "progress") uiLog(`  · ${d.step}${d.detail ? " — " + d.detail : ""}`);
+  else if (name === "error") {
+    uiLog("✗ " + d.message, "e");
+    if (d.retryCode) $("paneCode").classList.remove("hide");
+  } else if (name === "need-code") {
+    sessionId = d.sessionId;
+    $("paneCode").classList.remove("hide");
+    $("codeMsg").textContent = d.message || "Canva is asking for a verification code.";
+    $("canvaCode").placeholder = d.codeSource === "authenticator" ? "6-digit app code" : "123456";
+    $("canvaCode").focus();
+    uiLog(d.codeSource === "authenticator"
+      ? "! Canva wants your authenticator-app code (rotates every 30s)"
+      : "! Canva wants a verification code — check your email", "w");
+  } else if (name === "ready") onReady(d);
+}
+
+/* step 1 — open Chrome (cookies or email+password) and read the destinations */
+$("openBtn").onclick = async () => {
+  const designId = $("uiDesign").value.trim() || (selected && selected.id);
+  if (!designId) { uiLog("✗ Enter a design id (or pick one above).", "e"); return; }
+
+  const body = { designId, mode: authMode };
+  if (authMode === "cookies") {
+    body.cookies = $("cookies").value;
+    if (!body.cookies.trim()) { uiLog("✗ Paste your Canva cookies first.", "e"); return; }
+  } else {
+    body.email = $("canvaEmail").value.trim();
+    body.password = $("canvaPassword").value;
+    if (!body.email || !body.password) { uiLog("✗ Enter both email and password.", "e"); return; }
+  }
+
+  $("openBtn").disabled = true;
+  $("uiLog").textContent = ""; $("uiLog").classList.add("hide");
+  uiLog(`→ Opening ${designId} in Chrome (${authMode === "cookies" ? "cookies" : "email + password"})`, "d");
+
+  try {
+    const res = await fetch("/api/canva-ui/open", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    await readSse(res, handleOpenEvent);
+  } catch (e) { uiLog("✗ " + e.message, "e"); }
+  finally { $("openBtn").disabled = false; }
+};
+
+/* step 1b — the emailed verification code */
+$("codeBtn").onclick = async () => {
+  const code = $("canvaCode").value.trim();
+  if (!code) { uiLog("✗ Enter the code Canva emailed you.", "e"); return; }
+  if (!sessionId) { uiLog("✗ No sign-in in progress — click Open in Chrome first.", "e"); return; }
+  $("codeBtn").disabled = true;
+  uiLog(`  · Submitting code…`);
+  try {
+    const res = await fetch(`/api/canva-ui/${sessionId}/code`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+    });
+    await readSse(res, handleOpenEvent);
+  } catch (e) { uiLog("✗ " + e.message, "e"); }
+  finally { $("codeBtn").disabled = false; }
+};
+
+function renderPlatforms(platforms) {
+  const wrap = $("platforms");
+  wrap.textContent = "";
+  if (!platforms.length) {
+    $("platformHint").textContent =
+      "Canva didn't offer any social destination for this design. Connect one in Canva (Share → Social), then reopen.";
+    return;
+  }
+  $("platformHint").textContent = "Pick one:";
+  for (const p of platforms) {
+    const b = document.createElement("button");
+    b.className = "pbtn"; b.type = "button"; b.textContent = p.label;
+    b.onclick = () => choosePlatform(p.label, b);
+    wrap.append(b);
+  }
+}
+
+/* step 2 — select it, then read back which account Canva will post as */
+async function choosePlatform(platform, btn) {
+  for (const b of $("platforms").children) b.classList.remove("sel");
+  btn.classList.add("sel");
+  $("platformHint").textContent = "Reading the account Canva will post as…";
+  uiLog(`  · Selecting ${platform}…`);
+  try {
+    const r = await fetch(`/api/canva-ui/${sessionId}/platform`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ platform }),
+    });
+    const j = await r.json();
+    if (!j.ok) { uiLog("✗ " + j.message, "e"); $("platformHint").textContent = "Pick one:"; return; }
+
+    $("platformHint").textContent = "Pick one:";
+    renderAccounts(j.accounts || [], j.account, platform);
+    showAccount(j.account, platform);
+    setStep(2, true, true); setStep(3, true);
+  } catch (e) { uiLog("✗ " + e.message, "e"); }
+}
+
+function showAccount(account, platform) {
+  const box = $("accountBox");
+  if (account?.connected) {
+    box.className = "acct ok";
+    box.textContent = `✓ Will post as ${account.handle} on ${platform}`;
+    uiLog(`✓ Connected account: ${account.handle}`, "s");
+  } else {
+    box.className = "acct bad";
+    box.textContent = `! ${account?.raw || "No connected account detected."}`;
+    uiLog(`! ${account?.raw || "no account detected"}`, "w");
+  }
+  $("uploadSummary").textContent =
+    `${platform}${account?.handle ? " · " + account.handle : ""}`;
+}
+
+/** One button per account Canva has connected for this platform. */
+function renderAccounts(accounts, current, platform) {
+  const wrap = $("accounts");
+  wrap.textContent = "";
+  if (accounts.length <= 1) {
+    $("accountHint").textContent = accounts.length
+      ? "Post as (only one account connected):"
+      : "Post as:";
+  } else {
+    $("accountHint").textContent = `Post as (${accounts.length} accounts connected — pick one):`;
+  }
+  for (const a of accounts) {
+    const b = document.createElement("button");
+    b.className = "pbtn" + (a.handle === current?.handle ? " sel" : "");
+    b.type = "button";
+    b.textContent = a.handle;
+    b.onclick = () => chooseAccount(a.handle, b, platform);
+    wrap.append(b);
+  }
+}
+
+async function chooseAccount(handle, btn, platform) {
+  for (const b of $("accounts").children) b.classList.remove("sel");
+  btn.classList.add("sel");
+  uiLog(`  · Switching to ${handle}…`);
+  try {
+    const r = await fetch(`/api/canva-ui/${sessionId}/account`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ handle }),
+    });
+    const j = await r.json();
+    if (!j.ok) { uiLog("✗ " + j.message, "e"); return; }
+    showAccount(j.account, platform);
+  } catch (e) { uiLog("✗ " + e.message, "e"); }
+}
+
+/* step 3 — type the description into Canva's panel */
+$("captionBtn").onclick = async () => {
+  const caption = $("uiCaption").value.trim();
+  if (!caption) { $("captionStatus").textContent = "Write something first."; return; }
+  $("captionBtn").disabled = true;
+  $("captionStatus").textContent = "typing…"; $("captionStatus").style.color = "";
+  try {
+    const r = await fetch(`/api/canva-ui/${sessionId}/caption`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ caption }),
+    });
+    const j = await r.json();
+    $("captionStatus").style.color = j.ok ? "var(--ok)" : "var(--warn)";
+    $("captionStatus").textContent = j.ok
+      ? `✓ ${(j.text || "").length} chars in Canva's field`
+      : (j.message || "check the browser window");
+    uiLog(j.ok ? `✓ Description inserted (${(j.text||"").length} chars)` : `! ${j.message}`, j.ok ? "s" : "w");
+    setStep(3, true, j.ok); setStep(4, true);
+  } catch (e) { $("captionStatus").textContent = "✗ " + e.message; }
+  finally { $("captionBtn").disabled = false; }
+};
+
+/* step 4 — click upload and wait for Canva to finish */
+$("uploadBtn").onclick = async () => {
+  $("uploadBtn").disabled = true;
+  uiLog("→ Uploading…", "d");
+  try {
+    const res = await fetch(`/api/canva-ui/${sessionId}/upload`, { method: "POST" });
+    await readSse(res, (name, d) => {
+      if (name === "progress") uiLog(`  · ${d.step}${d.detail ? " — " + d.detail : ""}`);
+      else if (name === "error") uiLog("✗ " + d.message, "e");
+      else if (name === "done") {
+        if (d.published) {
+          uiLog(`✓ Published to ${d.platform}${d.account?.handle ? " as " + d.account.handle : ""}`, "s");
+          setStep(4, true, true);
+        } else {
+          uiLog(`! Finished with outcome "${d.outcome}" — ${d.detail || "check Canva"}`, "w");
+        }
+      }
+    });
+  } catch (e) { uiLog("✗ " + e.message, "e"); }
+  finally { $("uploadBtn").disabled = false; }
+};
+
+$("closeBtn").onclick = async () => {
+  if (!sessionId) return;
+  await fetch(`/api/canva-ui/${sessionId}/close`, { method: "POST" });
+  uiLog("Browser closed.", "d");
+  sessionId = null;
+  setStep(2, false); setStep(3, false); setStep(4, false); setStep(1, true);
+};
+
+captureTokenFromHash();
+await refreshStatus();
+if (tokenValid()) loadDesigns();
+</script>
+</body>
+</html>
