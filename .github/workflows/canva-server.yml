@@ -41,6 +41,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Note whether a proxy is configured
+        run: |
+          if [ -n "${{ secrets.WEBSHARE_API_KEY }}" ]; then
+            echo "HAS_WEBSHARE=true" >> "$GITHUB_ENV"
+            echo "Webshare key present — this runner's IP will be authorised."
+          else
+            echo "HAS_WEBSHARE=false" >> "$GITHUB_ENV"
+            echo "No Webshare key — running on the runner's own IP."
+          fi
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -68,6 +78,14 @@ jobs:
           test -e /tmp/.X11-unix/X99 && echo "Xvfb :99 ready"
           x11vnc -display :99 -nopw -forever -shared -rfbport "$VNC_PORT" -quiet > /tmp/x11vnc.log 2>&1 &
           sleep 2 && echo "x11vnc on :$VNC_PORT"
+
+      # A runner gets a fresh IP each run, so the proxy has to be told about it.
+      # Harmless when WEBSHARE_API_KEY is unset — the step just skips.
+      - name: Whitelist this runner with Webshare
+        if: ${{ env.HAS_WEBSHARE == 'true' }}
+        env:
+          WEBSHARE_API_KEY: ${{ secrets.WEBSHARE_API_KEY }}
+        run: npm run webshare:whitelist
 
       - name: Setup ungoogled-chromium + cf-autoclick
         timeout-minutes: 6

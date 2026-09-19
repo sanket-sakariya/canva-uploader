@@ -12,6 +12,14 @@
  *
  *   CHROME_BIN        path to the chromium binary   (default: system Chrome)
  *   CF_AUTOCLICK_DIR  unpacked cf-autoclick folder  (default: none)
+ *
+ * Egress can be routed through a proxy, which is how Canva's Instagram panel
+ * is reached from CI at all: Meta refuses to load it for a datacenter IP, so a
+ * residential exit is required.
+ *
+ *   CANVA_PROXY_SERVER    e.g. http://host:port
+ *   CANVA_PROXY_USERNAME  optional (not needed when the IP is whitelisted)
+ *   CANVA_PROXY_PASSWORD  optional
  */
 import { chromium, type BrowserContext } from "playwright";
 import { existsSync } from "node:fs";
@@ -65,10 +73,33 @@ export function cfAutoclickDir(): string | undefined {
   return dir;
 }
 
+export interface ProxyConfig {
+  server: string;
+  username?: string;
+  password?: string;
+}
+
+/** Proxy to route the browser through, if one is configured. */
+export function proxyConfig(): ProxyConfig | undefined {
+  const server = process.env.CANVA_PROXY_SERVER?.trim();
+  if (!server) return undefined;
+  const username = process.env.CANVA_PROXY_USERNAME?.trim() || undefined;
+  const password = process.env.CANVA_PROXY_PASSWORD?.trim() || undefined;
+  return { server, username, password };
+}
+
+/** Host:port only — never the credentials. */
+export function describeProxy(): string {
+  const p = proxyConfig();
+  if (!p) return "proxy=direct";
+  const host = p.server.replace(/^\w+:\/\//, "");
+  return `proxy=${host}${p.username ? " (authenticated)" : ""}`;
+}
+
 export function describeStack(): string {
   const bin = process.env.CHROME_BIN?.trim();
   const ext = cfAutoclickDir();
-  return `${bin ? `chromium=${bin}` : "chromium=system chrome"}, ${ext ? `cf-autoclick=${ext}` : "cf-autoclick=off"}`;
+  return `${bin ? `chromium=${bin}` : "chromium=system chrome"}, ${ext ? `cf-autoclick=${ext}` : "cf-autoclick=off"}, ${describeProxy()}`;
 }
 
 /**
@@ -110,6 +141,9 @@ export async function launch(opts: LaunchOptions): Promise<BrowserContext> {
   const context = await chromium.launchPersistentContext(opts.userDataDir, {
     headless,
     executablePath,
+    // Playwright handles proxy auth; Chromium's own --proxy-server cannot take
+    // credentials and would raise a native auth dialog nothing can answer.
+    proxy: proxyConfig(),
     // Only ask for the "chrome" channel when no explicit binary was supplied.
     channel: executablePath ? undefined : "chrome",
     slowMo: opts.slowMo ?? 0,

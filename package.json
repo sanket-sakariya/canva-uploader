@@ -19,7 +19,8 @@
     "canva:login": "tsx src/cli-ui.ts login",
     "canva:post": "tsx src/cli-ui.ts post",
     "test:ui": "tsx tests/ui-smoke.test.ts",
-    "ci:publish": "tsx src/ci-publish.ts"
+    "ci:publish": "tsx src/ci-publish.ts",
+    "webshare:whitelist": "tsx src/webshare.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
